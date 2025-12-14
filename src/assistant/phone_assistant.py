@@ -1,11 +1,12 @@
 """Main PhoneAssistant class that orchestrates all components."""
 
-from typing import Optional, Dict
+from datetime import datetime
+from typing import Optional, Dict, Any
 from src.assistant.claude_handler import ClaudeHandler
 from src.voice.twilio_handler import TwilioHandler
 from src.integrations.crm_base import CRMBase
 from src.integrations.mock_crm import MockCRM
-from src.utils.config import Config, load_config
+from src.utils.config import Config, load_config, mask_phone_number
 from src.utils.logger import setup_logger
 
 
@@ -41,13 +42,15 @@ class PhoneAssistant:
         self.twilio = TwilioHandler(
             account_sid=self.config.twilio_account_sid,
             auth_token=self.config.twilio_auth_token,
-            phone_number=self.config.twilio_phone_number
+            phone_number=self.config.twilio_phone_number,
+            speech_timeout=self.config.speech_timeout,
+            voice_language=self.config.voice_language
         )
 
         self.crm = crm or MockCRM()
 
-        # Track active calls
-        self.active_calls: Dict[str, Dict] = {}
+        # Track active calls with metadata
+        self.active_calls: Dict[str, Dict[str, Any]] = {}
 
         self.logger.info("Phone Assistant initialized successfully")
 
@@ -76,25 +79,27 @@ class PhoneAssistant:
                     "Hello! Thank you for calling. "
                     "I'm your AI assistant. How can I help you today?"
                 )
-                self.logger.info(f"New caller: {caller_number}")
+                # Log with masked phone number
+                self.logger.info(f"New caller: {mask_phone_number(caller_number)}")
 
             # Initialize conversation for this caller
             self.active_calls[caller_number] = {
                 "customer": customer,
-                "call_start": None
+                "call_start": datetime.now().isoformat(),
+                "interaction_count": 0
             }
 
             return self.twilio.create_greeting_response(greeting)
 
         except Exception as e:
-            self.logger.error(f"Error handling incoming call: {e}")
+            self.logger.error(f"Error handling incoming call: {e}", exc_info=self.config.debug)
             return self.twilio.create_greeting_response()
 
     def process_speech(
         self,
         caller_number: str,
         speech_text: str,
-        call_context: Optional[Dict] = None
+        call_context: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         Process speech input from caller and generate response.
@@ -112,6 +117,8 @@ class PhoneAssistant:
             customer = None
             if caller_number in self.active_calls:
                 customer = self.active_calls[caller_number].get("customer")
+                # Track interactions
+                self.active_calls[caller_number]["interaction_count"] += 1
 
             # Build context for Claude
             system_prompt = self._build_system_prompt(customer)
@@ -133,10 +140,7 @@ class PhoneAssistant:
                     self.logger.error(f"Error logging to CRM: {e}")
 
             # Determine if conversation should continue
-            continue_conversation = not any(
-                phrase in ai_response.lower()
-                for phrase in ["goodbye", "thank you for calling", "have a great day"]
-            )
+            continue_conversation = not self._is_ending_phrase(ai_response)
 
             return self.twilio.create_response_twiml(
                 message=ai_response,
@@ -144,9 +148,30 @@ class PhoneAssistant:
             )
 
         except Exception as e:
-            self.logger.error(f"Error processing speech: {e}")
+            self.logger.error(f"Error processing speech: {e}", exc_info=self.config.debug)
             error_message = "I apologize, I'm having trouble processing that. Could you please try again?"
             return self.twilio.create_response_twiml(error_message, continue_conversation=True)
+
+    def _is_ending_phrase(self, response: str) -> bool:
+        """
+        Check if response contains phrases indicating end of conversation.
+
+        Args:
+            response: AI response text
+
+        Returns:
+            bool: True if conversation should end
+        """
+        ending_phrases = [
+            "goodbye",
+            "thank you for calling",
+            "have a great day",
+            "have a nice day",
+            "take care",
+            "talk to you later"
+        ]
+        response_lower = response.lower()
+        return any(phrase in response_lower for phrase in ending_phrases)
 
     def make_outbound_call(
         self,
@@ -174,7 +199,7 @@ class PhoneAssistant:
             self.logger.info(f"Outbound call initiated: {call_sid}")
             return call_sid
         except Exception as e:
-            self.logger.error(f"Error making outbound call: {e}")
+            self.logger.error(f"Error making outbound call: {e}", exc_info=self.config.debug)
             raise
 
     def send_sms_notification(self, to_number: str, message: str) -> str:
@@ -196,7 +221,7 @@ class PhoneAssistant:
             self.logger.info(f"SMS notification sent: {message_sid}")
             return message_sid
         except Exception as e:
-            self.logger.error(f"Error sending SMS: {e}")
+            self.logger.error(f"Error sending SMS: {e}", exc_info=self.config.debug)
             raise
 
     def end_call(self, caller_number: str) -> None:
@@ -206,30 +231,41 @@ class PhoneAssistant:
         Args:
             caller_number: Caller's phone number
         """
-        if caller_number in self.active_calls:
-            # Get conversation summary
-            summary = self.claude.get_conversation_summary()
+        if caller_number not in self.active_calls:
+            self.logger.debug(f"No active call found for {mask_phone_number(caller_number)}")
+            return
 
-            # Log summary to CRM if customer exists
-            customer = self.active_calls[caller_number].get("customer")
-            if customer:
-                try:
-                    self.crm.create_note(
-                        customer_id=customer["id"],
-                        note=f"Call Summary: {summary}"
-                    )
-                except Exception as e:
-                    self.logger.error(f"Error logging call summary: {e}")
+        call_data = self.active_calls[caller_number]
 
-            # Reset conversation
-            self.claude.reset_conversation()
+        # Get conversation summary
+        summary = self.claude.get_conversation_summary()
 
-            # Remove from active calls
-            del self.active_calls[caller_number]
+        # Log summary to CRM if customer exists
+        customer = call_data.get("customer")
+        if customer:
+            try:
+                call_duration = ""
+                if call_data.get("call_start"):
+                    start = datetime.fromisoformat(call_data["call_start"])
+                    duration_seconds = (datetime.now() - start).total_seconds()
+                    call_duration = f" (Duration: {int(duration_seconds)}s)"
 
-            self.logger.info(f"Call ended for: {caller_number}")
+                self.crm.create_note(
+                    customer_id=customer["id"],
+                    note=f"Call Summary{call_duration}: {summary}"
+                )
+            except Exception as e:
+                self.logger.error(f"Error logging call summary: {e}")
 
-    def _build_system_prompt(self, customer: Optional[Dict] = None) -> str:
+        # Reset conversation
+        self.claude.reset_conversation()
+
+        # Remove from active calls
+        del self.active_calls[caller_number]
+
+        self.logger.info(f"Call ended for: {mask_phone_number(caller_number)}")
+
+    def _build_system_prompt(self, customer: Optional[Dict[str, Any]] = None) -> str:
         """
         Build system prompt for Claude with customer context.
 
@@ -255,7 +291,11 @@ class PhoneAssistant:
 
         return base_prompt
 
-    def start(self):
+    def get_active_call_count(self) -> int:
+        """Get the number of active calls."""
+        return len(self.active_calls)
+
+    def start(self) -> None:
         """
         Start the phone assistant service.
 
@@ -263,7 +303,8 @@ class PhoneAssistant:
         In production, this would start a FastAPI/Flask server.
         """
         self.logger.info("Phone Assistant service started")
-        self.logger.info(f"Ready to receive calls at: {self.config.twilio_phone_number}")
-        print(f"📞 Phone Assistant is ready!")
-        print(f"Phone Number: {self.config.twilio_phone_number}")
+        masked_number = mask_phone_number(self.config.twilio_phone_number)
+        self.logger.info(f"Ready to receive calls at: {masked_number}")
+        print("Phone Assistant is ready!")
+        print(f"Phone Number: {masked_number}")
         print("Waiting for incoming calls...")
