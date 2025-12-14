@@ -1,8 +1,8 @@
-# 📞 AI Phone Assistant
+# AI Phone Assistant
 
 Open-source AI-powered phone assistant that handles customer inquiries, appointments, and status updates. Integrates with popular CRM and scheduling systems.
 
-## 🌟 Features
+## Features
 
 - **Natural Language Understanding** - Powered by Claude AI for human-like conversations
 - **CRM Integration** - Works with Salesforce, HubSpot, and custom CRMs
@@ -10,8 +10,9 @@ Open-source AI-powered phone assistant that handles customer inquiries, appointm
 - **SMS Notifications** - Send automated status updates to customers
 - **Multi-language Support** - Handle calls in multiple languages
 - **Call Analytics** - Track call metrics and customer satisfaction
+- **Security** - PII protection, webhook validation, and secure configuration
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -38,38 +39,65 @@ cp .env.example .env
 # Edit .env with your API keys
 ```
 
+For detailed installation instructions, see [INSTALL.md](INSTALL.md).
+
 ### Configuration
 
 Create a `.env` file with the following variables:
 
 ```env
-ANTHROPIC_API_KEY=your_claude_api_key
-TWILIO_ACCOUNT_SID=your_twilio_sid
-TWILIO_AUTH_TOKEN=your_twilio_token
-TWILIO_PHONE_NUMBER=your_twilio_number
-CRM_API_KEY=your_crm_api_key
+# Required
+ANTHROPIC_API_KEY=sk-ant-your_api_key_here
+TWILIO_ACCOUNT_SID=ACyour_account_sid
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_PHONE_NUMBER=+14155551234
+
+# Optional
+LOG_LEVEL=INFO
+DEBUG=false
 ```
+
+See [.env.example](.env.example) for all configuration options.
 
 ### Usage
 
-```python
-from ai_phone_assistant import PhoneAssistant
+**Start the server:**
 
-# Initialize the assistant
-assistant = PhoneAssistant()
-
-# Start receiving calls
-assistant.start()
+```bash
+python main.py --server
 ```
 
-## 📋 Use Cases
+**Programmatic usage:**
+
+```python
+from src.assistant.phone_assistant import PhoneAssistant
+from src.utils.config import load_config
+
+# Load configuration
+config = load_config()
+
+# Initialize the assistant
+assistant = PhoneAssistant(config=config)
+
+# The assistant is now ready to handle calls via webhooks
+```
+
+## Use Cases
 
 - **Auto Shops** - "Is my car ready?" status inquiries
 - **Salons & Spas** - Appointment booking and reminders
 - **Service Businesses** - Schedule service calls
 - **Medical Offices** - Patient appointment management
 
-## 🛠️ Development
+## Documentation
+
+- [Architecture Overview](ARCHITECTURE.md) - System design and component descriptions
+- [Installation Guide](INSTALL.md) - Detailed setup and deployment instructions
+- [Changelog](CHANGELOG.md) - Version history and changes
+- [Implementation Notes](IMPLEMENTATION_NOTES.md) - Technical decisions and rationale
+- [Contributing Guide](CONTRIBUTING.md) - How to contribute
+
+## Development
 
 ### Project Structure
 
@@ -78,20 +106,40 @@ ai-phone-assistant/
 ├── src/
 │   ├── assistant/       # Core AI assistant logic
 │   ├── integrations/    # CRM and calendar integrations
-│   ├── voice/          # Voice processing
-│   └── utils/          # Helper functions
-├── tests/              # Unit and integration tests
-├── docs/               # Documentation
-└── examples/           # Example implementations
+│   ├── voice/           # Voice processing
+│   ├── utils/           # Helper functions
+│   └── server.py        # FastAPI webhook server
+├── tests/               # Unit and integration tests
+├── examples/            # Example implementations
+├── main.py              # CLI entry point
+└── requirements.txt     # Python dependencies
 ```
 
 ### Running Tests
 
 ```bash
+# Run all tests
 pytest tests/
+
+# Run with coverage
+pytest --cov=src tests/
+
+# Run specific test file
+pytest tests/test_config.py -v
 ```
 
-## 🤝 Contributing
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Health check |
+| `/health` | GET | Detailed health status |
+| `/voice/incoming` | POST | Handle incoming calls |
+| `/voice/process` | POST | Process speech input |
+| `/voice/status` | POST | Call status callbacks |
+| `/sms/incoming` | POST | Handle incoming SMS |
+
+## Contributing
 
 Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTING.md) before submitting PRs.
 
@@ -101,22 +149,21 @@ Contributions are welcome! Please read our [Contributing Guidelines](CONTRIBUTIN
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - Built with [Anthropic Claude](https://www.anthropic.com/) for natural language understanding
 - Phone integration powered by [Twilio](https://www.twilio.com/)
 - Maintained by [AIQSO](https://aiqso.io)
 
-## 📞 Support
+## Support
 
-- 📧 Email: support@aiqso.io
-- 🐛 Issues: [GitHub Issues](https://github.com/qvidal01/ai-phone-assistant/issues)
-- 💬 Discussions: [GitHub Discussions](https://github.com/qvidal01/ai-phone-assistant/discussions)
+- Issues: [GitHub Issues](https://github.com/qvidal01/ai-phone-assistant/issues)
+- Discussions: [GitHub Discussions](https://github.com/qvidal01/ai-phone-assistant/discussions)
 
 ---
 
-Made with ❤️ by [AIQSO](https://aiqso.io)
+Made with care by [AIQSO](https://aiqso.io)

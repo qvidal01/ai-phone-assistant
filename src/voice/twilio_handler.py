@@ -1,8 +1,9 @@
 """Twilio voice integration for phone assistant."""
 
-from typing import Optional, Callable
+from typing import Optional, Dict, Any
 from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse, Gather
+from src.utils.config import mask_phone_number
 from src.utils.logger import setup_logger
 
 
@@ -13,7 +14,10 @@ class TwilioHandler:
         self,
         account_sid: str,
         auth_token: str,
-        phone_number: str
+        phone_number: str,
+        speech_timeout: str = "auto",
+        voice_language: str = "en-US",
+        log_level: str = "INFO"
     ):
         """
         Initialize Twilio handler.
@@ -22,12 +26,17 @@ class TwilioHandler:
             account_sid: Twilio account SID
             auth_token: Twilio auth token
             phone_number: Twilio phone number
+            speech_timeout: Speech timeout setting (default: auto)
+            voice_language: Voice recognition language (default: en-US)
+            log_level: Logging level
         """
         self.client = Client(account_sid, auth_token)
         self.phone_number = phone_number
-        self.logger = setup_logger(__name__)
+        self.speech_timeout = speech_timeout
+        self.voice_language = voice_language
+        self.logger = setup_logger(__name__, level=log_level)
 
-    def create_greeting_response(self, greeting: str = None) -> str:
+    def create_greeting_response(self, greeting: Optional[str] = None) -> str:
         """
         Create TwiML response for greeting callers.
 
@@ -50,8 +59,8 @@ class TwilioHandler:
             input='speech',
             action='/voice/process',
             method='POST',
-            speech_timeout='auto',
-            language='en-US'
+            speech_timeout=self.speech_timeout,
+            language=self.voice_language
         )
         gather.say(greeting)
         response.append(gather)
@@ -85,8 +94,8 @@ class TwilioHandler:
                 input='speech',
                 action='/voice/process',
                 method='POST',
-                speech_timeout='auto',
-                language='en-US'
+                speech_timeout=self.speech_timeout,
+                language=self.voice_language
             )
             gather.say(message)
             response.append(gather)
@@ -130,7 +139,8 @@ class TwilioHandler:
                 status_callback=callback_url
             )
 
-            self.logger.info(f"Call initiated to {to_number}: {call.sid}")
+            # Log with masked phone number
+            self.logger.info(f"Call initiated to {mask_phone_number(to_number)}: {call.sid}")
             return call.sid
 
         except Exception as e:
@@ -155,14 +165,15 @@ class TwilioHandler:
                 body=message
             )
 
-            self.logger.info(f"SMS sent to {to_number}: {message_obj.sid}")
+            # Log with masked phone number
+            self.logger.info(f"SMS sent to {mask_phone_number(to_number)}: {message_obj.sid}")
             return message_obj.sid
 
         except Exception as e:
             self.logger.error(f"Error sending SMS: {e}")
             raise
 
-    def get_call_status(self, call_sid: str) -> dict:
+    def get_call_status(self, call_sid: str) -> Dict[str, Any]:
         """
         Get the status of a call.
 
