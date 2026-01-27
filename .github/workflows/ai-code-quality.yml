@@ -1,0 +1,447 @@
+# AI-Powered Code Quality & Security
+# Combines: CodeQL, Claude PR Review, and Local AI Gateway
+#
+# Required Secrets:
+#   - ANTHROPIC_API_KEY: For Claude-powered PR reviews
+#   - AI_GATEWAY_URL: (optional) Your AI Gateway endpoint
+#
+# GitHub Advanced Security enables Copilot Autofix automatically
+
+name: AI Code Quality
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+env:
+  AI_GATEWAY_URL: ${{ secrets.AI_GATEWAY_URL || 'https://ai-gateway.aiqso.io' }}
+
+jobs:
+  # ============================================
+  # JOB 1: Traditional Linting (Fast)
+  # ============================================
+  lint:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    outputs:
+      has_errors: ${{ steps.lint.outputs.has_errors }}
+      error_report: ${{ steps.lint.outputs.error_report }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect project type
+        id: detect
+        run: |
+          if [ -f "package.json" ]; then
+            echo "type=node" >> $GITHUB_OUTPUT
+          elif [ -f "pyproject.toml" ] || [ -f "requirements.txt" ]; then
+            echo "type=python" >> $GITHUB_OUTPUT
+          elif [ -f "Cargo.toml" ]; then
+            echo "type=rust" >> $GITHUB_OUTPUT
+          elif [ -f "go.mod" ]; then
+            echo "type=go" >> $GITHUB_OUTPUT
+          else
+            echo "type=unknown" >> $GITHUB_OUTPUT
+          fi
+
+      # Node.js projects
+      - name: Setup Node
+        if: steps.detect.outputs.type == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Lint Node.js
+        if: steps.detect.outputs.type == 'node'
+        id: lint-node
+        continue-on-error: true
+        run: |
+          npm ci --ignore-scripts 2>/dev/null || npm install --ignore-scripts
+          mkdir -p reports
+
+          # ESLint
+          if [ -f ".eslintrc.js" ] || [ -f ".eslintrc.json" ] || [ -f "eslint.config.js" ]; then
+            npx eslint . --format json > reports/eslint.json 2>&1 || true
+          fi
+
+          # TypeScript
+          if [ -f "tsconfig.json" ]; then
+            npx tsc --noEmit 2> reports/typescript.txt || true
+          fi
+
+          # Prettier check
+          if [ -f ".prettierrc" ] || [ -f "prettier.config.js" ]; then
+            npx prettier --check . 2> reports/prettier.txt || true
+          fi
+
+      # Python projects
+      - name: Setup Python
+        if: steps.detect.outputs.type == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Lint Python
+        if: steps.detect.outputs.type == 'python'
+        id: lint-python
+        continue-on-error: true
+        run: |
+          pip install ruff mypy
+          mkdir -p reports
+
+          # Ruff (fast linter + formatter)
+          ruff check . --output-format=json > reports/ruff.json 2>&1 || true
+
+          # MyPy type checking
+          if [ -f "pyproject.toml" ] || [ -f "mypy.ini" ]; then
+            mypy . --ignore-missing-imports 2> reports/mypy.txt || true
+          fi
+
+      - name: Aggregate lint results
+        id: lint
+        run: |
+          has_errors=false
+          error_report=""
+
+          for f in reports/*; do
+            if [ -f "$f" ] && [ -s "$f" ]; then
+              content=$(cat "$f" | head -c 5000)
+              if [ -n "$content" ]; then
+                has_errors=true
+                error_report="${error_report}\n### $(basename $f)\n\`\`\`\n${content}\n\`\`\`\n"
+              fi
+            fi
+          done
+
+          echo "has_errors=$has_errors" >> $GITHUB_OUTPUT
+          # Store in file for multi-line output
+          echo -e "$error_report" > reports/combined.md
+
+      - name: Upload lint reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: lint-reports
+          path: reports/
+          retention-days: 7
+
+  # ============================================
+  # JOB 2: Security Scanning (CodeQL)
+  # ============================================
+  security:
+    name: Security Scan (CodeQL)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect languages
+        id: detect-lang
+        run: |
+          langs=""
+          [ -f "package.json" ] && langs="${langs}javascript,"
+          [ -f "tsconfig.json" ] && langs="${langs}typescript,"
+          ([ -f "pyproject.toml" ] || [ -f "requirements.txt" ]) && langs="${langs}python,"
+          [ -f "go.mod" ] && langs="${langs}go,"
+          [ -f "Cargo.toml" ] && langs="${langs}rust,"
+          langs=${langs%,}  # Remove trailing comma
+          echo "languages=$langs" >> $GITHUB_OUTPUT
+
+      - name: Initialize CodeQL
+        if: steps.detect-lang.outputs.languages != ''
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ steps.detect-lang.outputs.languages }}
+          # Copilot Autofix is enabled automatically with GitHub Advanced Security
+
+      - name: Autobuild
+        if: steps.detect-lang.outputs.languages != ''
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        if: steps.detect-lang.outputs.languages != ''
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ steps.detect-lang.outputs.languages }}"
+
+  # ============================================
+  # JOB 3: Dependency Vulnerability Scan
+  # ============================================
+  dependencies:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect and audit
+        run: |
+          mkdir -p reports
+
+          # Node.js
+          if [ -f "package-lock.json" ]; then
+            npm audit --json > reports/npm-audit.json 2>&1 || true
+          fi
+
+          # Python
+          if [ -f "requirements.txt" ]; then
+            pip install pip-audit
+            pip-audit -r requirements.txt --format json > reports/pip-audit.json 2>&1 || true
+          fi
+
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-reports
+          path: reports/
+          retention-days: 7
+
+  # ============================================
+  # JOB 4: Claude AI Code Review (PRs only)
+  # ============================================
+  claude-review:
+    name: Claude Code Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs: [lint, security]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download lint reports
+        uses: actions/download-artifact@v4
+        with:
+          name: lint-reports
+          path: lint-reports/
+        continue-on-error: true
+
+      - name: Get PR diff
+        id: diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git diff "origin/${BASE_REF}...HEAD" > pr_diff.txt
+          echo "diff_size=$(wc -c < pr_diff.txt)" >> $GITHUB_OUTPUT
+
+      - name: Claude Review via API
+        if: steps.diff.outputs.diff_size < 100000
+        id: claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "ANTHROPIC_API_KEY not set, skipping Claude review"
+            exit 0
+          fi
+
+          # Prepare context (safely read from files, not from user input)
+          DIFF=$(cat pr_diff.txt | head -c 50000)
+          LINT_ERRORS=""
+          if [ -f "lint-reports/combined.md" ]; then
+            LINT_ERRORS=$(cat lint-reports/combined.md | head -c 10000)
+          fi
+
+          # Create prompt
+          cat << 'PROMPT' > prompt.txt
+          You are a senior code reviewer. Analyze this pull request and provide:
+
+          1. **Security Issues**: Any vulnerabilities or security concerns
+          2. **Bug Risks**: Potential bugs or logic errors
+          3. **Code Quality**: Suggestions for improvement
+          4. **Linting Fixes**: If lint errors provided, suggest fixes
+
+          Be concise. Use bullet points. Focus on actionable feedback.
+          If the code looks good, say so briefly.
+
+          PROMPT
+
+          # Safely append diff content using jq for proper escaping
+          echo "$DIFF" > diff_content.txt
+          echo "$LINT_ERRORS" > lint_content.txt
+
+          # Build JSON payload safely
+          jq -n \
+            --arg prompt "$(cat prompt.txt)" \
+            --arg diff "$(cat diff_content.txt)" \
+            --arg lint "$(cat lint_content.txt)" \
+            '{
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 2000,
+              messages: [{
+                role: "user",
+                content: ($prompt + "\n\n## Code Diff\n```diff\n" + $diff + "\n```\n\n## Lint Errors\n" + $lint)
+              }]
+            }' > request.json
+
+          # Call Claude API
+          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d @request.json)
+
+          # Extract response text
+          echo "$RESPONSE" | jq -r '.content[0].text // "Review failed"' > claude_review.md
+
+      - name: Post PR Comment
+        if: steps.diff.outputs.diff_size < 100000
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let review = '';
+            try {
+              review = fs.readFileSync('claude_review.md', 'utf8');
+            } catch (e) {
+              review = 'Claude review not available';
+            }
+
+            const body = `## 🤖 AI Code Review (Claude)\n\n${review}\n\n---\n<sub>Powered by Claude Sonnet | [View Workflow](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})</sub>`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('AI Code Review (Claude)')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }
+
+  # ============================================
+  # JOB 5: AI Gateway Review (Fallback/Supplement)
+  # ============================================
+  ai-gateway-review:
+    name: AI Gateway Analysis
+    if: github.event_name == 'pull_request' && failure()
+    runs-on: ubuntu-latest
+    needs: [claude-review]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: AI Gateway Review (Fallback)
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          DIFF=$(git diff "origin/${BASE_REF}...HEAD" | head -c 30000)
+
+          # Build request safely with jq
+          jq -n \
+            --arg diff "$DIFF" \
+            '{
+              model: "qwen-coder-32b",
+              messages: [{
+                role: "user",
+                content: ("Review this code diff for bugs and security issues. Be brief:\n\n" + $diff)
+              }],
+              max_tokens: 1000
+            }' > gateway_request.json
+
+          RESPONSE=$(curl -s -X POST "$AI_GATEWAY_URL/v1/chat/completions" \
+            -H "Content-Type: application/json" \
+            -d @gateway_request.json)
+
+          echo "## AI Gateway Review (Fallback)" > gateway_review.md
+          echo "$RESPONSE" | jq -r '.choices[0].message.content // "Review unavailable"' >> gateway_review.md
+          cat gateway_review.md
+
+  # ============================================
+  # JOB 6: Auto-fix suggestions
+  # ============================================
+  auto-fix:
+    name: Generate Auto-fixes
+    if: github.event_name == 'pull_request' && needs.lint.outputs.has_errors == 'true'
+    runs-on: ubuntu-latest
+    needs: [lint]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download lint reports
+        uses: actions/download-artifact@v4
+        with:
+          name: lint-reports
+          path: lint-reports/
+
+      - name: Generate fixes with Claude
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "Skipping auto-fix (no API key)"
+            exit 0
+          fi
+
+          ERRORS=$(cat lint-reports/combined.md 2>/dev/null | head -c 10000)
+
+          if [ -z "$ERRORS" ]; then
+            echo "No errors to fix"
+            exit 0
+          fi
+
+          # Get relevant file contents
+          FILES=$(grep -oE '[a-zA-Z0-9_/.-]+\.(js|ts|py|tsx|jsx)' lint-reports/* 2>/dev/null | sort -u | head -5)
+
+          FILE_CONTENTS=""
+          for f in $FILES; do
+            if [ -f "$f" ]; then
+              FILE_CONTENTS="${FILE_CONTENTS}\n### $f\n\`\`\`\n$(head -100 "$f")\n\`\`\`\n"
+            fi
+          done
+
+          # Build request safely with jq
+          jq -n \
+            --arg errors "$ERRORS" \
+            --arg files "$FILE_CONTENTS" \
+            '{
+              model: "claude-sonnet-4-20250514",
+              max_tokens: 3000,
+              messages: [{
+                role: "user",
+                content: ("Fix these lint errors. Provide the corrected code in diff format that can be applied with git apply.\n\nErrors:\n" + $errors + "\n\nFiles:\n" + $files)
+              }]
+            }' > fix_request.json
+
+          RESPONSE=$(curl -s https://api.anthropic.com/v1/messages \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: $ANTHROPIC_API_KEY" \
+            -H "anthropic-version: 2023-06-01" \
+            -d @fix_request.json)
+
+          echo "$RESPONSE" | jq -r '.content[0].text' > suggested_fixes.md
+          echo "## Suggested Fixes"
+          cat suggested_fixes.md
+
+      - name: Upload fixes
+        uses: actions/upload-artifact@v4
+        with:
+          name: suggested-fixes
+          path: suggested_fixes.md
+          retention-days: 7
