@@ -1,0 +1,22 @@
+# Core dependencies
+anthropic>=0.40.0
+twilio>=9.0.0
+python-dotenv>=1.0.0
+fastapi>=0.100.0
+uvicorn>=0.23.0
+pydantic>=2.0.0
+
+# HTTP client for Ollama
+httpx>=0.25.0
+
+# Database and caching
+redis>=5.0.0
+sqlalchemy>=2.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+
+# Optional: Calendar integration
+# google-api-python-client>=2.100.0
+# google-auth-oauthlib>=1.0.0
