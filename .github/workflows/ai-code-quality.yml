@@ -85,7 +85,7 @@ jobs:
       # Python projects
       - name: Setup Python
         if: steps.detect.outputs.type == 'python'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -182,7 +182,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
