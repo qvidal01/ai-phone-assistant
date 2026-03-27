@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "security"
+    reviewers:
+      - "qvidal01"
+    groups:
+      production:
+        patterns:
+          - "anthropic"
+          - "twilio"
+          - "fastapi"
+          - "uvicorn"
+          - "pydantic"
+          - "httpx"
+          - "python-dotenv"
+      testing:
+        patterns:
+          - "pytest*"
+          - "ruff"
+          - "pip-audit"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "ci"

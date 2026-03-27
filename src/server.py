@@ -82,7 +82,11 @@ async def handle_incoming_call(
     except Exception as e:
         logger.error(f"Error handling incoming call: {e}")
         # Return a basic error response
-        error_twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say>We are experiencing technical difficulties. Please try again later.</Say><Hangup/></Response>'
+        error_twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Response><Say>We are experiencing technical difficulties. '
+            'Please try again later.</Say><Hangup/></Response>'
+        )
         return Response(content=error_twiml, media_type="application/xml")
 
 
@@ -118,7 +122,11 @@ async def process_voice_input(
         return Response(content=twiml_response, media_type="application/xml")
     except Exception as e:
         logger.error(f"Error processing speech: {e}")
-        error_twiml = '<?xml version="1.0" encoding="UTF-8"?><Response><Say>I apologize, but I encountered an error. Please try again.</Say><Redirect>/voice/process</Redirect></Response>'
+        error_twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<Response><Say>I apologize, but I encountered an error. Please try again.</Say>'
+            '<Redirect>/voice/process</Redirect></Response>'
+        )
         return Response(content=error_twiml, media_type="application/xml")
 
 

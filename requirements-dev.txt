@@ -1,0 +1,12 @@
+# Development dependencies - includes all production deps
+-r requirements.txt
+
+# Testing
+pytest~=9.0.0
+pytest-asyncio~=1.3.0
+
+# Code quality
+ruff>=0.8.0
+
+# Security auditing
+pip-audit>=2.10.0
