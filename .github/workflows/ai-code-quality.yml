@@ -230,7 +230,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download lint reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: lint-reports
           path: lint-reports/
@@ -397,7 +397,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download lint reports
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: lint-reports
           path: lint-reports/
